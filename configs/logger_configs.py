@@ -26,7 +26,7 @@ class LoggerInfo:
 
 
 class LoggerMessage:
-    DATA_LOAD_DONE = "All data load has done."
+    DATA_LOAD_DONE = "TSV Raw data load has done."
     GLOBAL_DATA_READ_DONE = "Reading Global Data Files are done."
     MODEL_TRAINING_STARTED = "Model training has been started..."
     MODEL_TRAINING_DONE = "Model training have done."

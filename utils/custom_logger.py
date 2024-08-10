@@ -1,5 +1,5 @@
 import logging
-from configs.logger_configs import LOGGING_CONFIG
+from configs.logger_configs import LoggerInfo
 
 class Color(object):
     """

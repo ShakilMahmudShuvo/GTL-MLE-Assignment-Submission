@@ -1,5 +1,7 @@
 import torch
 from transformers import AutoTokenizer
+from sklearn.metrics import precision_recall_fscore_support, accuracy_score
+import numpy as np
 from utils.custom_logger import logger
 from utils.data_loader import DataLoader
 from services.training_service.trainer import Trainer, NERPOSModel
@@ -7,6 +9,7 @@ from services.data_preprocess.preprocessor import Preprocessor
 from services.data_preprocess.data_splitter import DataSplitter
 from services.data_preprocess.dataset import BanglaDataset
 from configs.data_config import GlobalDataConfig, ModelConfig
+
 
 class TrainerBase:
     def __init__(self):
@@ -89,6 +92,90 @@ class TrainerBase:
 
         logger.success(f"Model exported to ONNX format at {self.onnx_model_path}")
 
+    def evaluate_model(self, pos_tag_to_id, ner_tag_to_id):
+        id_to_pos_tag = {idx: tag for tag, idx in pos_tag_to_id.items()}
+        id_to_ner_tag = {idx: tag for tag, idx in ner_tag_to_id.items()}
+
+        metrics = self.evaluate(self.model, self.val_loader, pos_tag_to_id, ner_tag_to_id, id_to_pos_tag, id_to_ner_tag,
+                                self.device)
+
+        logger.success("Evaluation completed successfully")
+        logger.info(f"POS Tagging - Accuracy: {metrics['POS Tagging']['Accuracy']:.4f}, "
+                    f"Precision: {metrics['POS Tagging']['Precision']:.4f}, "
+                    f"Recall: {metrics['POS Tagging']['Recall']:.4f}, "
+                    f"F1 Score: {metrics['POS Tagging']['F1 Score']:.4f}")
+        logger.info(f"NER Tagging - Accuracy: {metrics['NER Tagging']['Accuracy']:.4f}, "
+                    f"Precision: {metrics['NER Tagging']['Precision']:.4f}, "
+                    f"Recall: {metrics['NER Tagging']['Recall']:.4f}, "
+                    f"F1 Score: {metrics['NER Tagging']['F1 Score']:.4f}")
+
+        return metrics
+
+    @staticmethod
+    def evaluate(model, dataloader, pos_tag_to_id, ner_tag_to_id, id_to_pos_tag, id_to_ner_tag, device):
+        model.eval()
+
+        all_pos_preds = []
+        all_pos_labels = []
+        all_ner_preds = []
+        all_ner_labels = []
+
+        with torch.no_grad():
+            for batch in dataloader:
+                input_ids = batch['input_ids'].to(device)
+                attention_mask = batch['attention_mask'].to(device)
+                pos_tag_ids = batch['pos_tag_ids'].to(device)
+                ner_tag_ids = batch['ner_tag_ids'].to(device)
+
+                pos_logits, ner_logits = model(input_ids, attention_mask)
+
+                pos_preds = torch.argmax(pos_logits, dim=-1).cpu().numpy()
+                ner_preds = torch.argmax(ner_logits, dim=-1).cpu().numpy()
+
+                pos_tag_ids = pos_tag_ids.cpu().numpy()
+                ner_tag_ids = ner_tag_ids.cpu().numpy()
+
+                # Flatten the predictions and labels, and remove padding (ignore_index = -100)
+                for i in range(pos_preds.shape[0]):
+                    pos_pred_flat = pos_preds[i][pos_tag_ids[i] != -100]
+                    pos_label_flat = pos_tag_ids[i][pos_tag_ids[i] != -100]
+                    all_pos_preds.extend(pos_pred_flat)
+                    all_pos_labels.extend(pos_label_flat)
+
+                    ner_pred_flat = ner_preds[i][ner_tag_ids[i] != -100]
+                    ner_label_flat = ner_tag_ids[i][ner_tag_ids[i] != -100]
+                    all_ner_preds.extend(ner_pred_flat)
+                    all_ner_labels.extend(ner_label_flat)
+
+        # Calculate POS tag metrics
+        pos_precision, pos_recall, pos_f1, _ = precision_recall_fscore_support(
+            all_pos_labels, all_pos_preds, average='macro', labels=np.unique(all_pos_labels)
+        )
+        pos_accuracy = accuracy_score(all_pos_labels, all_pos_preds)
+
+        # Calculate NER tag metrics
+        ner_precision, ner_recall, ner_f1, _ = precision_recall_fscore_support(
+            all_ner_labels, all_ner_preds, average='macro', labels=np.unique(all_ner_labels)
+        )
+        ner_accuracy = accuracy_score(all_ner_labels, all_ner_preds)
+
+        metrics = {
+            "POS Tagging": {
+                "Accuracy": pos_accuracy,
+                "Precision": pos_precision,
+                "Recall": pos_recall,
+                "F1 Score": pos_f1
+            },
+            "NER Tagging": {
+                "Accuracy": ner_accuracy,
+                "Precision": ner_precision,
+                "Recall": ner_recall,
+                "F1 Score": ner_f1
+            }
+        }
+
+        return metrics
+
     def run(self):
         texts, labels, pos_tag_to_id, ner_tag_to_id = self.load_and_preprocess_data()
         train_texts, val_texts, train_labels, val_labels = self.split_data(texts, labels)
@@ -97,4 +184,5 @@ class TrainerBase:
         self.train_model()
         self.save_model()
         self.export_to_onnx()
-
+        metrics = self.evaluate_model(pos_tag_to_id, ner_tag_to_id)
+        return metrics

@@ -48,8 +48,9 @@ class ONNXInferenceService:
                                 padding='max_length', truncation=True, max_length=self.max_len)
 
         # Extract the input_ids and attention_mask directly as NumPy arrays
-        input_ids = inputs["input_ids"]
-        attention_mask = inputs["attention_mask"]
+        input_ids = inputs["input_ids"].astype(np.int64)  # Convert to int64
+        attention_mask = inputs["attention_mask"].astype(np.int64)  # Convert to int64
+
 
         # Perform inference using ONNX model
         ort_inputs = {'input_ids': input_ids, 'attention_mask': attention_mask}
